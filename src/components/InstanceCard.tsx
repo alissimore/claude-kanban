@@ -51,11 +51,6 @@ const InstanceCard = memo(function InstanceCard({
 
   const needsAttention = instance.state === 'attention'
 
-  const handleClick = (e: React.MouseEvent) => {
-    e.stopPropagation()
-    onClick?.()
-  }
-
   const style = transform
     ? {
         transform: CSS.Translate.toString(transform),
@@ -66,22 +61,35 @@ const InstanceCard = memo(function InstanceCard({
     <div
       ref={setNodeRef}
       style={style}
-      {...listeners}
-      {...attributes}
-      className={`bg-card-bg border rounded-lg p-4 cursor-grab transition-all select-none ${stateStyles[instance.state]} ${
+      className={`bg-card-bg border rounded-lg p-4 transition-all select-none relative ${stateStyles[instance.state]} ${
         isSelected
           ? 'border-blue-500 ring-2 ring-blue-200 shadow-md'
           : 'border-border hover:border-gray-300 hover:shadow-sm'
       } ${needsAttention ? 'animate-attention-pulse' : ''} ${
         isDragging ? 'opacity-50' : ''
       } ${isDragOverlay ? 'shadow-xl cursor-grabbing rotate-2' : ''}`}
-      onClick={handleClick}
+      onClick={onClick}
       role="button"
       tabIndex={0}
       onKeyDown={e => e.key === 'Enter' && onClick?.()}
     >
+      {/* Drag handle - only this area is draggable */}
+      {!isDragOverlay && (
+        <div
+          {...listeners}
+          {...attributes}
+          className="absolute top-2 right-2 p-1.5 cursor-grab hover:bg-gray-100 rounded text-gray-400 hover:text-gray-600 touch-none"
+          onClick={e => e.stopPropagation()}
+          title="Drag to move"
+        >
+          <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+            <path d="M7 2a2 2 0 1 0 .001 4.001A2 2 0 0 0 7 2zm0 6a2 2 0 1 0 .001 4.001A2 2 0 0 0 7 8zm0 6a2 2 0 1 0 .001 4.001A2 2 0 0 0 7 14zm6-8a2 2 0 1 0-.001-4.001A2 2 0 0 0 13 6zm0 2a2 2 0 1 0 .001 4.001A2 2 0 0 0 13 8zm0 6a2 2 0 1 0 .001 4.001A2 2 0 0 0 13 14z" />
+          </svg>
+        </div>
+      )}
+
       {/* Header */}
-      <div className="flex items-start justify-between mb-2">
+      <div className="flex items-start justify-between mb-2 pr-8">
         <div className="flex-1 min-w-0">
           <h3 className="font-medium text-text-primary truncate">{instance.name}</h3>
           <div className="text-xs text-text-muted truncate" title={instance.cwd}>
