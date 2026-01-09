@@ -244,8 +244,11 @@ async function getTodos(sessionId: string): Promise<Array<{ content: string; sta
 
 /**
  * Classify the state of an instance based on its conversation
+ * @param messages - Recent messages from the conversation
+ * @param todos - Todo items for the session
+ * @param fileAgeMs - How long since the conversation file was last modified (in milliseconds)
  */
-function classifyState(messages: RawMessage[], todos: Array<{ status: string }>): InstanceState {
+function classifyState(messages: RawMessage[], todos: Array<{ status: string }>, fileAgeMs: number): InstanceState {
   if (messages.length === 0) return 'working'
 
   // Find the last non-system message (skip system/result messages)
@@ -297,12 +300,19 @@ function classifyState(messages: RawMessage[], todos: Array<{ status: string }>)
         return 'attention'
       }
 
+      // If file is stale (>15s) but last action was tool use, Claude might be stuck waiting
+      // This can happen after tool results are received
+      if (fileAgeMs > 15000) {
+        return 'attention'
+      }
+
       // Other tools mean it's working
       return 'working'
     }
 
-    // Check if thinking (still processing) - no stop reason means still streaming
-    if (hasThinking(lastContent) && !lastMessage.stopReason) {
+    // Check if thinking (still processing)
+    // If file is recently modified, Claude is still working
+    if (hasThinking(lastContent) && fileAgeMs < 10000) {
       return 'working'
     }
 
@@ -318,8 +328,17 @@ function classifyState(messages: RawMessage[], todos: Array<{ status: string }>)
       return 'done'
     }
 
+    // KEY INDICATOR: If the file hasn't been modified in 10+ seconds and
+    // the last assistant message has text content (not just thinking),
+    // Claude is waiting for user input
+    const hasTextContent = Array.isArray(lastContent) &&
+      lastContent.some((c: any) => c.type === 'text' && c.text?.trim())
+
+    if (fileAgeMs > 10000 && hasTextContent) {
+      return 'attention'
+    }
+
     // If Claude finished speaking (end_turn), it's waiting for user input
-    // This is the primary indicator that Claude needs attention
     if (lastMessage.stopReason === 'end_turn') {
       return 'attention'
     }
@@ -404,12 +423,16 @@ export async function detectInstances(): Promise<ClaudeInstance[]> {
       if (!sessionId || seenSessions.has(sessionId)) continue
       seenSessions.add(sessionId)
 
+      // Get file modification time to determine if Claude is actively working
+      const fileStat = await fs.stat(conversationFile)
+      const fileAgeMs = Date.now() - fileStat.mtime.getTime()
+
       const lastMessage = messages[messages.length - 1]
       // Use cwd from conversation if available, otherwise use process cwd
       const sessionCwd = lastMessage.cwd || cwd
       const todos = await getTodos(sessionId)
       const gitInfo = await getGitInfo(sessionCwd)
-      const state = classifyState(messages, todos)
+      const state = classifyState(messages, todos, fileAgeMs)
       const displayContent = createDisplayContent(messages)
 
       instances.push({
