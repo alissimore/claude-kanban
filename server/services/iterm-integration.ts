@@ -3,6 +3,8 @@ import { promisify } from 'util'
 
 const execAsync = promisify(exec)
 
+type TerminalApp = 'iTerm2' | 'Terminal' | 'unknown'
+
 /**
  * Find the TTY device for a given process ID
  */
@@ -19,16 +21,50 @@ export async function findTtyForPid(pid: number): Promise<string | null> {
 }
 
 /**
+ * Detect which terminal application owns a TTY by walking up the process tree
+ */
+async function detectTerminalApp(pid: number): Promise<TerminalApp> {
+  try {
+    // Walk up the process tree looking for a terminal app
+    let currentPid = pid
+    const maxDepth = 10
+
+    for (let i = 0; i < maxDepth; i++) {
+      const { stdout } = await execAsync(
+        `ps -o ppid=,command= -p ${currentPid} 2>/dev/null`
+      )
+      const [ppid, ...commandParts] = stdout.trim().split(/\s+/)
+      const command = commandParts.join(' ')
+
+      if (command.includes('iTerm')) {
+        return 'iTerm2'
+      }
+      if (command.includes('Terminal.app')) {
+        return 'Terminal'
+      }
+
+      currentPid = parseInt(ppid, 10)
+      if (isNaN(currentPid) || currentPid <= 1) {
+        break
+      }
+    }
+
+    return 'unknown'
+  } catch {
+    return 'unknown'
+  }
+}
+
+/**
  * Send a message to an iTerm2 session by its TTY
  */
-export async function sendToItermSession(tty: string, message: string): Promise<boolean> {
+async function sendToItermSession(tty: string, message: string): Promise<boolean> {
   // Escape the message for AppleScript
   const escapedMessage = message
     .replace(/\\/g, '\\\\')
     .replace(/"/g, '\\"')
 
   // AppleScript to find the session with matching TTY and send text
-  // We use "write text" which types the text, then use keystroke return to submit
   const script = `
     tell application "iTerm2"
       repeat with w in windows
@@ -39,7 +75,6 @@ export async function sendToItermSession(tty: string, message: string): Promise<
                 tell s
                   write text "${escapedMessage}" newline no
                 end tell
-                -- Small delay to ensure text is written
                 delay 0.05
                 tell application "System Events"
                   keystroke return
@@ -58,7 +93,52 @@ export async function sendToItermSession(tty: string, message: string): Promise<
     const { stdout } = await execAsync(`osascript -e '${script}'`)
     return stdout.trim() === 'success'
   } catch (err) {
-    console.error('AppleScript error:', err)
+    console.error('iTerm AppleScript error:', err)
+    return false
+  }
+}
+
+/**
+ * Send a message to a Terminal.app session by its TTY
+ */
+async function sendToTerminalSession(tty: string, message: string): Promise<boolean> {
+  // Escape the message for AppleScript
+  const escapedMessage = message
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"')
+
+  // AppleScript to find the Terminal.app window with matching TTY
+  const script = `
+    tell application "Terminal"
+      repeat with w in windows
+        repeat with t in tabs of w
+          try
+            if tty of t is "${tty}" then
+              -- Focus the window and tab first
+              set frontmost of w to true
+              set selected of t to true
+              -- Type the message using System Events
+              tell application "System Events"
+                tell process "Terminal"
+                  keystroke "${escapedMessage}"
+                  delay 0.05
+                  keystroke return
+                end tell
+              end tell
+              return "success"
+            end if
+          end try
+        end repeat
+      end repeat
+    end tell
+    return "not_found"
+  `
+
+  try {
+    const { stdout } = await execAsync(`osascript -e '${script}'`)
+    return stdout.trim() === 'success'
+  } catch (err) {
+    console.error('Terminal.app AppleScript error:', err)
     return false
   }
 }
@@ -75,16 +155,30 @@ export async function sendMessageToInstance(pid: number, message: string): Promi
   if (!tty) {
     return {
       success: false,
-      error: 'Could not find terminal for this instance. It may not be running in iTerm2.',
+      error: 'Could not find terminal for this instance. It may not be running in a supported terminal.',
     }
   }
 
-  // Send to iTerm
-  const sent = await sendToItermSession(tty, message)
+  // Detect which terminal app is being used
+  const terminalApp = await detectTerminalApp(pid)
+
+  let sent = false
+  if (terminalApp === 'iTerm2') {
+    sent = await sendToItermSession(tty, message)
+  } else if (terminalApp === 'Terminal') {
+    sent = await sendToTerminalSession(tty, message)
+  } else {
+    // Try iTerm2 first, then Terminal.app
+    sent = await sendToItermSession(tty, message)
+    if (!sent) {
+      sent = await sendToTerminalSession(tty, message)
+    }
+  }
+
   if (!sent) {
     return {
       success: false,
-      error: 'Could not send to iTerm session. The terminal may have been closed.',
+      error: `Could not send to ${terminalApp === 'unknown' ? 'terminal' : terminalApp} session. The terminal may have been closed.`,
     }
   }
 
@@ -136,12 +230,19 @@ export async function spawnInIterm(options: {
 }
 
 /**
- * Focus the iTerm2 session for a given PID
+ * Focus the terminal session for a given PID
  */
 export async function focusItermSession(pid: number): Promise<boolean> {
   const tty = await findTtyForPid(pid)
   if (!tty) return false
 
+  const terminalApp = await detectTerminalApp(pid)
+
+  if (terminalApp === 'Terminal') {
+    return focusTerminalSession(tty)
+  }
+
+  // Default to iTerm2
   const script = `
     tell application "iTerm2"
       repeat with w in windows
@@ -156,6 +257,36 @@ export async function focusItermSession(pid: number): Promise<boolean> {
               end if
             end try
           end repeat
+        end repeat
+      end repeat
+    end tell
+    return "not_found"
+  `
+
+  try {
+    const { stdout } = await execAsync(`osascript -e '${script}'`)
+    return stdout.trim() === 'success'
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Focus a Terminal.app session by TTY
+ */
+async function focusTerminalSession(tty: string): Promise<boolean> {
+  const script = `
+    tell application "Terminal"
+      repeat with w in windows
+        repeat with t in tabs of w
+          try
+            if tty of t is "${tty}" then
+              set frontmost of w to true
+              set selected of t to true
+              activate
+              return "success"
+            end if
+          end try
         end repeat
       end repeat
     end tell
