@@ -109,6 +109,8 @@ export default function ChatPanel({ instance, onClose }: ChatPanelProps) {
   const [sendError, setSendError] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
+  const prevMessageCountRef = useRef<number>(0)
+  const isNearBottomRef = useRef<boolean>(true)
 
   // Extract session ID from instance
   const sessionId = instance.conversationFile?.split('/').pop()?.replace('.jsonl', '') || instance.id
@@ -140,9 +142,28 @@ export default function ChatPanel({ instance, onClose }: ChatPanelProps) {
     return () => clearInterval(interval)
   }, [sessionId])
 
-  // Auto-scroll to bottom when new messages arrive
+  // Track scroll position to know if user is near bottom
   useEffect(() => {
-    if (messagesEndRef.current && conversation?.messages) {
+    const container = containerRef.current
+    if (!container) return
+
+    const handleScroll = () => {
+      const { scrollTop, scrollHeight, clientHeight } = container
+      // Consider "near bottom" if within 100px of the bottom
+      isNearBottomRef.current = scrollHeight - scrollTop - clientHeight < 100
+    }
+
+    container.addEventListener('scroll', handleScroll)
+    return () => container.removeEventListener('scroll', handleScroll)
+  }, [])
+
+  // Auto-scroll to bottom only when NEW messages arrive AND user is near bottom
+  useEffect(() => {
+    const messageCount = conversation?.messages?.length ?? 0
+    const hasNewMessages = messageCount > prevMessageCountRef.current
+    prevMessageCountRef.current = messageCount
+
+    if (hasNewMessages && isNearBottomRef.current && messagesEndRef.current) {
       messagesEndRef.current.scrollIntoView({ behavior: 'smooth' })
     }
   }, [conversation?.messages])
