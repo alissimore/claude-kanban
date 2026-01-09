@@ -26,9 +26,9 @@ export async function sendToItermSession(tty: string, message: string): Promise<
   const escapedMessage = message
     .replace(/\\/g, '\\\\')
     .replace(/"/g, '\\"')
-    .replace(/\n/g, '\\n')
 
   // AppleScript to find the session with matching TTY and send text
+  // We use "write text" which types the text, then use keystroke return to submit
   const script = `
     tell application "iTerm2"
       repeat with w in windows
@@ -37,7 +37,12 @@ export async function sendToItermSession(tty: string, message: string): Promise<
             try
               if tty of s is "${tty}" then
                 tell s
-                  write text "${escapedMessage}"
+                  write text "${escapedMessage}" newline no
+                end tell
+                -- Small delay to ensure text is written
+                delay 0.05
+                tell application "System Events"
+                  keystroke return
                 end tell
                 return "success"
               end if
