@@ -24,11 +24,11 @@ interface BoardProps {
 }
 
 const COLUMNS: { id: ColumnId; title: string; color: string }[] = [
+  { id: 'inactive', title: 'Inactive', color: 'bg-status-inactive' },
   { id: 'attention', title: 'Needs Me Now', color: 'bg-status-attention' },
   { id: 'working', title: 'Working Autonomously', color: 'bg-status-working' },
   { id: 'blocked', title: 'Blocked / Error', color: 'bg-status-blocked' },
   { id: 'done', title: 'Done', color: 'bg-status-done' },
-  { id: 'inactive', title: 'Inactive', color: 'bg-status-inactive' },
 ]
 
 export default function Board({
