@@ -64,12 +64,14 @@ function pathToClaudeDir(fsPath: string): string {
 }
 
 /**
- * Find all running Claude Code processes (excluding chrome-mcp)
+ * Find all running Claude Code processes (the actual claude CLI, not child processes)
  */
 async function findRunningProcesses(): Promise<Array<{ pid: number; cwd: string }>> {
   try {
+    // Match only the actual claude CLI binary, not paths containing "claude"
+    // The claude CLI shows up as "claude" or "claude --flags" in ps output
     const { stdout: psOutput } = await execAsync(
-      `ps aux | grep '[c]laude' | grep -v 'chrome-mcp' | awk '{print $2}'`
+      `ps aux | grep -E ' claude( |$)' | grep -v grep | grep -v 'chrome-mcp' | grep -v tmux | awk '{print $2}'`
     )
 
     const pids = psOutput.trim().split('\n').filter(Boolean).map(Number)
@@ -101,8 +103,8 @@ async function findRunningProcesses(): Promise<Array<{ pid: number; cwd: string 
  */
 async function findConversationFiles(cwd: string): Promise<string[]> {
   const projectDir = path.join(PROJECTS_DIR, pathToClaudeDir(cwd))
-  // Only include sessions active in the last 30 minutes
-  const thirtyMinutesAgo = Date.now() - 30 * 60 * 1000
+  // Only include sessions active in the last 4 hours
+  const fourHoursAgo = Date.now() - 4 * 60 * 60 * 1000
 
   try {
     const files = await fs.readdir(projectDir)
@@ -120,7 +122,7 @@ async function findConversationFiles(cwd: string): Promise<string[]> {
 
     // Filter to recently modified and sort by most recent
     return fileStats
-      .filter(f => f.mtime > thirtyMinutesAgo)
+      .filter(f => f.mtime > fourHoursAgo)
       .sort((a, b) => b.mtime - a.mtime)
       .map(f => f.file)
   } catch {
