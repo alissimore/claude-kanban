@@ -96,12 +96,13 @@ async function findRunningProcesses(): Promise<Array<{ pid: number; cwd: string 
 }
 
 /**
- * Find recently active conversation files for a working directory
- * Returns files modified in the last hour, sorted by most recent
+ * Find conversation files for a working directory
+ * Returns recently active conversation files sorted by most recent modification
  */
 async function findConversationFiles(cwd: string): Promise<string[]> {
   const projectDir = path.join(PROJECTS_DIR, pathToClaudeDir(cwd))
-  const oneHourAgo = Date.now() - 60 * 60 * 1000
+  // Only include sessions active in the last 30 minutes
+  const thirtyMinutesAgo = Date.now() - 30 * 60 * 1000
 
   try {
     const files = await fs.readdir(projectDir)
@@ -119,7 +120,7 @@ async function findConversationFiles(cwd: string): Promise<string[]> {
 
     // Filter to recently modified and sort by most recent
     return fileStats
-      .filter(f => f.mtime > oneHourAgo)
+      .filter(f => f.mtime > thirtyMinutesAgo)
       .sort((a, b) => b.mtime - a.mtime)
       .map(f => f.file)
   } catch {
@@ -247,7 +248,15 @@ async function getTodos(sessionId: string): Promise<Array<{ content: string; sta
 function classifyState(messages: RawMessage[], todos: Array<{ status: string }>): InstanceState {
   if (messages.length === 0) return 'working'
 
-  const lastMessage = messages[messages.length - 1]
+  // Find the last non-system message (skip system/result messages)
+  let lastMessage = messages[messages.length - 1]
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].type === 'user' || messages[i].type === 'assistant') {
+      lastMessage = messages[i]
+      break
+    }
+  }
+
   const lastContent = lastMessage.content
   const textContent = extractTextContent(lastContent).toLowerCase()
 
@@ -292,12 +301,30 @@ function classifyState(messages: RawMessage[], todos: Array<{ status: string }>)
       return 'working'
     }
 
-    // Check if thinking (still processing)
+    // Check if thinking (still processing) - no stop reason means still streaming
     if (hasThinking(lastContent) && !lastMessage.stopReason) {
       return 'working'
     }
 
-    // Check for explicit questions or prompts to user
+    // Check for completion indicators first
+    const allTodosDone = todos.length > 0 && todos.every(t => t.status === 'completed')
+    if (
+      allTodosDone ||
+      textContent.includes('all tasks completed') ||
+      textContent.includes('all done') ||
+      textContent.includes("i've completed") ||
+      textContent.includes('successfully completed')
+    ) {
+      return 'done'
+    }
+
+    // If Claude finished speaking (end_turn), it's waiting for user input
+    // This is the primary indicator that Claude needs attention
+    if (lastMessage.stopReason === 'end_turn') {
+      return 'attention'
+    }
+
+    // Check for explicit questions or prompts to user (fallback)
     if (
       textContent.includes('?') ||
       textContent.includes('would you like') ||
@@ -309,18 +336,6 @@ function classifyState(messages: RawMessage[], todos: Array<{ status: string }>)
       textContent.includes('shall i')
     ) {
       return 'attention'
-    }
-
-    // Check for completion indicators
-    const allTodosDone = todos.length > 0 && todos.every(t => t.status === 'completed')
-    if (
-      allTodosDone ||
-      textContent.includes('all tasks completed') ||
-      textContent.includes('all done') ||
-      textContent.includes("i've completed") ||
-      textContent.includes('successfully completed')
-    ) {
-      return 'done'
     }
   }
 
@@ -360,59 +375,66 @@ export async function detectInstances(): Promise<ClaudeInstance[]> {
   const instances: ClaudeInstance[] = []
   const seenSessions = new Set<string>()
 
-  // Group processes by cwd to avoid duplicate processing
-  const cwdToProcesses = new Map<string, { pid: number; cwd: string }>()
+  // Count processes per cwd - we'll show this many sessions per cwd
+  const cwdProcessCount = new Map<string, number>()
+  const cwdPids = new Map<string, number[]>()
   for (const proc of processes) {
-    // Keep the first (usually most recent) process for each cwd
-    if (!cwdToProcesses.has(proc.cwd)) {
-      cwdToProcesses.set(proc.cwd, proc)
-    }
+    cwdProcessCount.set(proc.cwd, (cwdProcessCount.get(proc.cwd) || 0) + 1)
+    if (!cwdPids.has(proc.cwd)) cwdPids.set(proc.cwd, [])
+    cwdPids.get(proc.cwd)!.push(proc.pid)
   }
 
-  for (const proc of cwdToProcesses.values()) {
-    const conversationFiles = await findConversationFiles(proc.cwd)
+  // For each unique cwd, get as many recent sessions as there are processes
+  for (const [cwd, processCount] of cwdProcessCount.entries()) {
+    const conversationFiles = await findConversationFiles(cwd)
+    const pids = cwdPids.get(cwd) || []
 
-    // Only take the most recent conversation file per directory
-    // This is usually the active session
-    const conversationFile = conversationFiles[0]
-    if (!conversationFile) continue
+    // Take the most recent N conversation files where N = number of processes
+    const filesToProcess = conversationFiles.slice(0, processCount)
 
-    const messages = await parseConversation(conversationFile)
-    if (messages.length === 0) continue
+    for (let i = 0; i < filesToProcess.length; i++) {
+      const conversationFile = filesToProcess[i]
+      const pid = pids[i] || pids[0] // Assign PIDs to sessions
 
-    // Get session ID from the most recent message
-    const sessionId = messages[messages.length - 1].sessionId || messages[0].sessionId
-    if (!sessionId || seenSessions.has(sessionId)) continue
-    seenSessions.add(sessionId)
+      const messages = await parseConversation(conversationFile)
+      if (messages.length === 0) continue
 
-    const lastMessage = messages[messages.length - 1]
-    const todos = await getTodos(sessionId)
-    const gitInfo = await getGitInfo(proc.cwd)
-    const state = classifyState(messages, todos)
-    const displayContent = createDisplayContent(messages)
+      // Get session ID from the most recent message
+      const sessionId = messages[messages.length - 1].sessionId || messages[0].sessionId
+      if (!sessionId || seenSessions.has(sessionId)) continue
+      seenSessions.add(sessionId)
 
-    instances.push({
-      id: sessionId,
-      pid: proc.pid,
-      cwd: proc.cwd,
-      name: path.basename(proc.cwd),
-      state,
-      lastActivity: new Date(lastMessage.timestamp),
-      gitBranch: gitInfo?.branch || lastMessage.gitBranch || undefined,
-      gitDirty: gitInfo?.isDirty,
-      lastMessage: {
-        type: displayContent.type,
-        content: displayContent.content,
-        timestamp: lastMessage.timestamp,
-      },
-      todos: {
-        total: todos.length,
-        completed: todos.filter(t => t.status === 'completed').length,
-        inProgress: todos.find(t => t.status === 'in_progress')?.content,
-        items: todos.slice(0, 5),
-      },
-      conversationFile: path.basename(conversationFile),
-    })
+      const lastMessage = messages[messages.length - 1]
+      // Use cwd from conversation if available, otherwise use process cwd
+      const sessionCwd = lastMessage.cwd || cwd
+      const todos = await getTodos(sessionId)
+      const gitInfo = await getGitInfo(sessionCwd)
+      const state = classifyState(messages, todos)
+      const displayContent = createDisplayContent(messages)
+
+      instances.push({
+        id: sessionId,
+        pid,
+        cwd: sessionCwd,
+        name: path.basename(sessionCwd),
+        state,
+        lastActivity: new Date(lastMessage.timestamp),
+        gitBranch: gitInfo?.branch || lastMessage.gitBranch || undefined,
+        gitDirty: gitInfo?.isDirty,
+        lastMessage: {
+          type: displayContent.type,
+          content: displayContent.content,
+          timestamp: lastMessage.timestamp,
+        },
+        todos: {
+          total: todos.length,
+          completed: todos.filter(t => t.status === 'completed').length,
+          inProgress: todos.find(t => t.status === 'in_progress')?.content,
+          items: todos.slice(0, 5),
+        },
+        conversationFile: path.basename(conversationFile),
+      })
+    }
   }
 
   // Sort by state priority, then by last activity
