@@ -1,4 +1,5 @@
 export type InstanceState = 'attention' | 'working' | 'blocked' | 'done'
+export type ColumnId = InstanceState | 'inactive'
 
 export interface ClaudeInstance {
   id: string

@@ -1,10 +1,11 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useMemo } from 'react'
 import Board from './components/Board'
 import Header from './components/Header'
 import ChatPanel from './components/ChatPanel'
 import SpawnDialog from './components/SpawnDialog'
 import { ClaudeInstance } from './types'
 import { useNotifications } from './hooks/useNotifications'
+import { useInactiveState } from './hooks/useInactiveState'
 
 interface SystemStatus {
   claudeInstalled: boolean
@@ -25,14 +26,31 @@ function App() {
   const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null)
   const [retryCount, setRetryCount] = useState(0)
 
-  // Notifications
+  // Inactive state management
+  const { inactiveIds, addInactive, removeInactive } = useInactiveState(instances)
+
+  // Filter instances into active and inactive
+  const { activeInstances, inactiveInstances } = useMemo(() => {
+    const active: ClaudeInstance[] = []
+    const inactive: ClaudeInstance[] = []
+    for (const instance of instances) {
+      if (inactiveIds.has(instance.id)) {
+        inactive.push(instance)
+      } else {
+        active.push(instance)
+      }
+    }
+    return { activeInstances: active, inactiveInstances: inactive }
+  }, [instances, inactiveIds])
+
+  // Notifications - only watch active instances
   const {
     settings: notificationSettings,
     updateSettings: updateNotificationSettings,
     permissionStatus,
     requestPermission,
     attentionCount,
-  } = useNotifications(instances)
+  } = useNotifications(activeInstances)
 
   const fetchInstances = useCallback(async () => {
     try {
@@ -180,9 +198,12 @@ function App() {
           </div>
         ) : (
           <Board
-            instances={instances}
+            instances={activeInstances}
+            inactiveInstances={inactiveInstances}
             selectedId={selectedInstance?.id}
             onSelectInstance={handleSelectInstance}
+            onMoveToInactive={addInactive}
+            onReactivate={removeInactive}
           />
         )}
       </main>

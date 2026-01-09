@@ -21,6 +21,7 @@ export default {
         'status-working': '#3b82f6',
         'status-blocked': '#f59e0b',
         'status-done': '#10b981',
+        'status-inactive': '#9ca3af',
       },
       animation: {
         'attention-pulse': 'attention-pulse 2s ease-in-out infinite',
