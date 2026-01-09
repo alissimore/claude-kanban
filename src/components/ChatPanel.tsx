@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, KeyboardEvent } from 'react'
 import { ClaudeInstance, Conversation } from '../types'
 import ChatMessage from './ChatMessage'
 import ConfirmDialog from './ConfirmDialog'
@@ -14,8 +14,12 @@ export default function ChatPanel({ instance, onClose }: ChatPanelProps) {
   const [error, setError] = useState<string | null>(null)
   const [showKillConfirm, setShowKillConfirm] = useState(false)
   const [killing, setKilling] = useState(false)
+  const [messageInput, setMessageInput] = useState('')
+  const [sending, setSending] = useState(false)
+  const [sendError, setSendError] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLTextAreaElement>(null)
 
   // Extract session ID from instance
   const sessionId = instance.conversationFile?.split('/').pop()?.replace('.jsonl', '') || instance.id
@@ -80,6 +84,55 @@ export default function ChatPanel({ instance, onClose }: ChatPanelProps) {
     } finally {
       setKilling(false)
       setShowKillConfirm(false)
+    }
+  }
+
+  const handleSendMessage = async () => {
+    if (!messageInput.trim() || sending) return
+
+    setSending(true)
+    setSendError(null)
+
+    try {
+      const response = await fetch(`http://localhost:3001/api/instances/${instance.pid}/message`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: messageInput.trim() }),
+      })
+      const data = await response.json()
+
+      if (data.success) {
+        setMessageInput('')
+        // Focus back to input
+        inputRef.current?.focus()
+      } else {
+        setSendError(data.error || 'Failed to send message')
+      }
+    } catch (err) {
+      setSendError(err instanceof Error ? err.message : 'Failed to send message')
+    } finally {
+      setSending(false)
+    }
+  }
+
+  const handleFocusTerminal = async () => {
+    try {
+      const response = await fetch(`http://localhost:3001/api/instances/${instance.pid}/focus`, {
+        method: 'POST',
+      })
+      const data = await response.json()
+      if (!data.success) {
+        setSendError(data.error || 'Failed to focus terminal')
+      }
+    } catch (err) {
+      setSendError(err instanceof Error ? err.message : 'Failed to focus terminal')
+    }
+  }
+
+  const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault()
+      handleSendMessage()
     }
   }
 
@@ -188,9 +241,70 @@ export default function ChatPanel({ instance, onClose }: ChatPanelProps) {
           )}
         </div>
 
-        {/* Footer with metadata */}
-        <div className="bg-white border-t border-gray-200 px-6 py-3 flex-shrink-0">
-          <div className="flex items-center justify-between">
+        {/* Message Input */}
+        <div className="bg-white border-t border-gray-200 px-4 py-3 flex-shrink-0">
+          {/* Error message */}
+          {sendError && (
+            <div className="mb-2 text-sm text-red-600 bg-red-50 px-3 py-2 rounded-lg flex items-center gap-2">
+              <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <span>{sendError}</span>
+              <button onClick={() => setSendError(null)} className="ml-auto text-red-400 hover:text-red-600">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+          )}
+
+          {/* Input area */}
+          <div className="flex gap-2">
+            <div className="flex-1 relative">
+              <textarea
+                ref={inputRef}
+                value={messageInput}
+                onChange={(e) => setMessageInput(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder="Send a message to Claude... (Enter to send, Shift+Enter for newline)"
+                rows={2}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                disabled={sending}
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <button
+                onClick={handleSendMessage}
+                disabled={!messageInput.trim() || sending}
+                className="px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-sm font-medium flex items-center gap-1"
+              >
+                {sending ? (
+                  <svg className="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                  </svg>
+                ) : (
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+                  </svg>
+                )}
+                Send
+              </button>
+              <button
+                onClick={handleFocusTerminal}
+                className="px-3 py-1.5 text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 text-xs font-medium flex items-center gap-1"
+                title="Open in Terminal"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                </svg>
+                Terminal
+              </button>
+            </div>
+          </div>
+
+          {/* Footer metadata */}
+          <div className="mt-2 flex items-center justify-between">
             <div className="flex items-center gap-4 text-xs text-gray-500">
               <span>PID: {instance.pid}</span>
               <span>Session: {sessionId.slice(0, 8)}...</span>
