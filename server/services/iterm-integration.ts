@@ -56,7 +56,7 @@ async function detectTerminalApp(pid: number): Promise<TerminalApp> {
 }
 
 /**
- * Send a message to an iTerm2 session by its TTY
+ * Send a message to an iTerm2 session by its TTY (without stealing focus)
  */
 async function sendToItermSession(tty: string, message: string): Promise<boolean> {
   // Escape the message for AppleScript
@@ -65,6 +65,7 @@ async function sendToItermSession(tty: string, message: string): Promise<boolean
     .replace(/"/g, '\\"')
 
   // AppleScript to find the session with matching TTY and send text
+  // Using "write text" with newline to avoid needing focus
   const script = `
     tell application "iTerm2"
       repeat with w in windows
@@ -73,11 +74,7 @@ async function sendToItermSession(tty: string, message: string): Promise<boolean
             try
               if tty of s is "${tty}" then
                 tell s
-                  write text "${escapedMessage}" newline no
-                end tell
-                delay 0.05
-                tell application "System Events"
-                  keystroke return
+                  write text "${escapedMessage}"
                 end tell
                 return "success"
               end if
@@ -99,7 +96,7 @@ async function sendToItermSession(tty: string, message: string): Promise<boolean
 }
 
 /**
- * Send a message to a Terminal.app session by its TTY
+ * Send a message to a Terminal.app session by its TTY (without stealing focus)
  */
 async function sendToTerminalSession(tty: string, message: string): Promise<boolean> {
   // Escape the message for AppleScript
@@ -107,24 +104,15 @@ async function sendToTerminalSession(tty: string, message: string): Promise<bool
     .replace(/\\/g, '\\\\')
     .replace(/"/g, '\\"')
 
-  // AppleScript to find the Terminal.app window with matching TTY
+  // AppleScript to find the Terminal.app tab with matching TTY and send text
+  // Using "do script" which doesn't require focus
   const script = `
     tell application "Terminal"
       repeat with w in windows
         repeat with t in tabs of w
           try
             if tty of t is "${tty}" then
-              -- Focus the window and tab first
-              set frontmost of w to true
-              set selected of t to true
-              -- Type the message using System Events
-              tell application "System Events"
-                tell process "Terminal"
-                  keystroke "${escapedMessage}"
-                  delay 0.05
-                  keystroke return
-                end tell
-              end tell
+              do script "${escapedMessage}" in t
               return "success"
             end if
           end try
