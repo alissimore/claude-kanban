@@ -107,6 +107,7 @@ export default function ChatPanel({ instance, onClose }: ChatPanelProps) {
   const [showKillConfirm, setShowKillConfirm] = useState(false)
   const [killing, setKilling] = useState(false)
   const [sendError, setSendError] = useState<string | null>(null)
+  const [showScrollButton, setShowScrollButton] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const prevMessageCountRef = useRef<number>(0)
@@ -150,11 +151,17 @@ export default function ChatPanel({ instance, onClose }: ChatPanelProps) {
     const handleScroll = () => {
       const { scrollTop, scrollHeight, clientHeight } = container
       // Consider "near bottom" if within 100px of the bottom
-      isNearBottomRef.current = scrollHeight - scrollTop - clientHeight < 100
+      const nearBottom = scrollHeight - scrollTop - clientHeight < 100
+      isNearBottomRef.current = nearBottom
+      setShowScrollButton(!nearBottom)
     }
 
     container.addEventListener('scroll', handleScroll)
     return () => container.removeEventListener('scroll', handleScroll)
+  }, [])
+
+  const scrollToBottom = useCallback(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [])
 
   // Auto-scroll to bottom only when NEW messages arrive AND user is near bottom
@@ -319,6 +326,19 @@ export default function ChatPanel({ instance, onClose }: ChatPanelProps) {
             </>
           )}
         </div>
+
+        {/* Scroll to bottom button */}
+        {showScrollButton && (
+          <button
+            onClick={scrollToBottom}
+            className="absolute bottom-24 right-8 p-2 bg-white border border-gray-300 rounded-full shadow-lg hover:bg-gray-50 transition-all"
+            title="Scroll to bottom"
+          >
+            <svg className="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 14l-7 7m0 0l-7-7m7 7V3" />
+            </svg>
+          </button>
+        )}
 
         {/* Message Input */}
         <div className="bg-white border-t border-gray-200 px-4 py-3 flex-shrink-0">
