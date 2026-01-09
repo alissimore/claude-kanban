@@ -1,4 +1,4 @@
-import { memo } from 'react'
+import { memo, useRef } from 'react'
 import { useDraggable } from '@dnd-kit/core'
 import { CSS } from '@dnd-kit/utilities'
 import { ClaudeInstance } from '../types'
@@ -44,6 +44,8 @@ const InstanceCard = memo(function InstanceCard({
     disabled: isDragOverlay,
   })
 
+  const dragHandleRef = useRef<HTMLDivElement>(null)
+
   const todoProgress =
     instance.todos.total > 0
       ? Math.round((instance.todos.completed / instance.todos.total) * 100)
@@ -58,6 +60,10 @@ const InstanceCard = memo(function InstanceCard({
     : undefined
 
   const handleCardClick = (e: React.MouseEvent) => {
+    // Don't trigger selection if clicking on drag handle
+    if (dragHandleRef.current?.contains(e.target as Node)) {
+      return
+    }
     e.stopPropagation()
     e.preventDefault()
     onClick?.()
@@ -82,10 +88,10 @@ const InstanceCard = memo(function InstanceCard({
       {/* Drag handle - only this area is draggable */}
       {!isDragOverlay && (
         <div
+          ref={dragHandleRef}
           {...listeners}
           {...attributes}
           className="absolute top-2 right-2 p-1.5 cursor-grab hover:bg-gray-100 rounded text-gray-400 hover:text-gray-600 touch-none"
-          onMouseDown={e => e.stopPropagation()}
           title="Drag to move"
         >
           <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
