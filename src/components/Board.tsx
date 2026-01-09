@@ -4,6 +4,9 @@ import {
   DragEndEvent,
   DragOverlay,
   DragStartEvent,
+  PointerSensor,
+  useSensor,
+  useSensors,
   pointerWithin,
 } from '@dnd-kit/core'
 import { ClaudeInstance, ColumnId } from '../types'
@@ -35,6 +38,15 @@ export default function Board({
   onMoveToInactive,
   onReactivate,
 }: BoardProps) {
+  // Require 8px movement before drag starts, allowing clicks to work
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 8,
+      },
+    })
+  )
+
   const [activeId, setActiveId] = useState<string | null>(null)
   const [sourceColumn, setSourceColumn] = useState<ColumnId | null>(null)
 
@@ -129,6 +141,7 @@ export default function Board({
 
   return (
     <DndContext
+      sensors={sensors}
       collisionDetection={pointerWithin}
       onDragStart={handleDragStart}
       onDragEnd={handleDragEnd}
