@@ -92,9 +92,9 @@ function App() {
     return () => clearInterval(interval)
   }, [fetchInstances])
 
-  const handleSelectInstance = (instance: ClaudeInstance) => {
+  const handleSelectInstance = useCallback((instance: ClaudeInstance) => {
     setSelectedInstance(instance)
-  }
+  }, [])
 
   const handleCloseDetail = () => {
     setSelectedInstance(null)

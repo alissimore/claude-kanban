@@ -1,3 +1,4 @@
+import { memo, useCallback } from 'react'
 import { ClaudeInstance } from '../types'
 import InstanceCard from './InstanceCard'
 
@@ -9,6 +10,29 @@ interface ColumnProps {
   onSelectInstance: (instance: ClaudeInstance) => void
 }
 
+// Wrapper component to provide stable onClick handler per instance
+const CardWrapper = memo(function CardWrapper({
+  instance,
+  isSelected,
+  onSelect,
+}: {
+  instance: ClaudeInstance
+  isSelected: boolean
+  onSelect: (instance: ClaudeInstance) => void
+}) {
+  const handleClick = useCallback(() => {
+    onSelect(instance)
+  }, [instance, onSelect])
+
+  return (
+    <InstanceCard
+      instance={instance}
+      isSelected={isSelected}
+      onClick={handleClick}
+    />
+  )
+})
+
 export default function Column({ title, color, instances, selectedId, onSelectInstance }: ColumnProps) {
   return (
     <div className="flex-shrink-0 w-80">
@@ -19,11 +43,11 @@ export default function Column({ title, color, instances, selectedId, onSelectIn
       </div>
       <div className="space-y-3">
         {instances.map(instance => (
-          <InstanceCard
+          <CardWrapper
             key={instance.id}
             instance={instance}
             isSelected={instance.id === selectedId}
-            onClick={() => onSelectInstance(instance)}
+            onSelect={onSelectInstance}
           />
         ))}
       </div>

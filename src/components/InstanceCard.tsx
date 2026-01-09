@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import { ClaudeInstance } from '../types'
 
 interface InstanceCardProps {
@@ -5,6 +6,8 @@ interface InstanceCardProps {
   isSelected?: boolean
   onClick?: () => void
 }
+
+// Memoize to prevent re-renders during polling that can interrupt click events
 
 function formatTimeAgo(dateString: string): string {
   const date = new Date(dateString)
@@ -29,21 +32,29 @@ const stateStyles = {
   done: 'border-l-4 border-l-status-done',
 }
 
-export default function InstanceCard({ instance, isSelected, onClick }: InstanceCardProps) {
+const InstanceCard = memo(function InstanceCard({ instance, isSelected, onClick }: InstanceCardProps) {
   const todoProgress = instance.todos.total > 0
     ? Math.round((instance.todos.completed / instance.todos.total) * 100)
     : null
 
   const needsAttention = instance.state === 'attention'
 
+  const handleClick = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    onClick?.()
+  }
+
   return (
     <div
-      className={`bg-card-bg border rounded-lg p-4 cursor-pointer transition-all ${stateStyles[instance.state]} ${
+      className={`bg-card-bg border rounded-lg p-4 cursor-pointer transition-all select-none ${stateStyles[instance.state]} ${
         isSelected
           ? 'border-blue-500 ring-2 ring-blue-200 shadow-md'
           : 'border-border hover:border-gray-300 hover:shadow-sm'
       } ${needsAttention ? 'animate-attention-pulse' : ''}`}
-      onClick={onClick}
+      onClick={handleClick}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => e.key === 'Enter' && onClick?.()}
     >
       {/* Header */}
       <div className="flex items-start justify-between mb-2">
@@ -123,4 +134,6 @@ export default function InstanceCard({ instance, isSelected, onClick }: Instance
       )}
     </div>
   )
-}
+})
+
+export default InstanceCard
