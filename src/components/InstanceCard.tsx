@@ -57,18 +57,24 @@ const InstanceCard = memo(function InstanceCard({
       }
     : undefined
 
+  const handleCardClick = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    e.preventDefault()
+    onClick?.()
+  }
+
   return (
     <div
       ref={setNodeRef}
       style={style}
-      className={`bg-card-bg border rounded-lg p-4 transition-all select-none relative ${stateStyles[instance.state]} ${
+      className={`bg-card-bg border rounded-lg p-4 transition-all select-none relative cursor-pointer ${stateStyles[instance.state]} ${
         isSelected
           ? 'border-blue-500 ring-2 ring-blue-200 shadow-md'
           : 'border-border hover:border-gray-300 hover:shadow-sm'
       } ${needsAttention ? 'animate-attention-pulse' : ''} ${
         isDragging ? 'opacity-50' : ''
       } ${isDragOverlay ? 'shadow-xl cursor-grabbing rotate-2' : ''}`}
-      onClick={onClick}
+      onMouseDown={handleCardClick}
       role="button"
       tabIndex={0}
       onKeyDown={e => e.key === 'Enter' && onClick?.()}
@@ -79,7 +85,7 @@ const InstanceCard = memo(function InstanceCard({
           {...listeners}
           {...attributes}
           className="absolute top-2 right-2 p-1.5 cursor-grab hover:bg-gray-100 rounded text-gray-400 hover:text-gray-600 touch-none"
-          onClick={e => e.stopPropagation()}
+          onMouseDown={e => e.stopPropagation()}
           title="Drag to move"
         >
           <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
