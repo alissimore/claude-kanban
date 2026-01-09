@@ -197,11 +197,10 @@ export async function spawnInIterm(options: {
   // Escape cwd for AppleScript
   const escapedCwd = cwd.replace(/'/g, "'\\''")
 
-  // AppleScript to create new iTerm window and run command
+  // AppleScript to create new iTerm window and run command (without stealing focus)
   const script = `
     tell application "iTerm2"
       create window with default profile command "cd '${escapedCwd}' && ${claudeCommand}"
-      activate
     end tell
   `
 

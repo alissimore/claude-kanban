@@ -117,7 +117,6 @@ export function useNotifications(instances: ClaudeInstance[]) {
     })
 
     notification.onclick = () => {
-      window.focus()
       notification.close()
     }
 
