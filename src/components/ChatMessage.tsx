@@ -1,8 +1,12 @@
 import { useState } from 'react'
-import { ConversationMessage, MessageContent } from '../types'
+import { ConversationMessage, MessageContent, AskUserQuestionInput } from '../types'
+import AskUserQuestionBlock from './AskUserQuestionBlock'
 
 interface ChatMessageProps {
   message: ConversationMessage
+  onAnswerQuestion?: (answer: string) => void
+  answeredToolIds?: Set<string>
+  getAnswerForToolId?: (toolId: string) => string | undefined
 }
 
 function formatTime(dateString: string): string {
@@ -161,7 +165,12 @@ function TextContent({ text }: { text: string }) {
   )
 }
 
-export default function ChatMessage({ message }: ChatMessageProps) {
+export default function ChatMessage({
+  message,
+  onAnswerQuestion,
+  answeredToolIds,
+  getAnswerForToolId,
+}: ChatMessageProps) {
   const isUser = message.type === 'user'
 
   return (
@@ -194,6 +203,22 @@ export default function ChatMessage({ message }: ChatMessageProps) {
               )
             }
             if (block.type === 'tool_use') {
+              // Special handling for AskUserQuestion
+              if (block.toolName === 'AskUserQuestion' && block.toolInput && onAnswerQuestion) {
+                const toolId = block.toolId || ''
+                const isAnswered = answeredToolIds?.has(toolId) || false
+                const answeredText = getAnswerForToolId?.(toolId)
+                return (
+                  <AskUserQuestionBlock
+                    key={i}
+                    toolId={toolId}
+                    toolInput={block.toolInput as AskUserQuestionInput}
+                    onAnswer={onAnswerQuestion}
+                    isAnswered={isAnswered}
+                    answeredText={answeredText}
+                  />
+                )
+              }
               return <ToolUseBlock key={i} content={block} />
             }
             if (block.type === 'tool_result') {

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, KeyboardEvent, memo, useCallback } from 'react'
+import { useState, useEffect, useRef, KeyboardEvent, memo, useCallback, useMemo } from 'react'
 import { ClaudeInstance, Conversation } from '../types'
 import ChatMessage from './ChatMessage'
 import ConfirmDialog from './ConfirmDialog'
@@ -222,6 +222,54 @@ export default function ChatPanel({ instance, onClose }: ChatPanelProps) {
     setSendError(error)
   }, [])
 
+  // Build a set of answered tool IDs and a map of toolId -> answer text
+  const { answeredToolIds, toolAnswers } = useMemo(() => {
+    const ids = new Set<string>()
+    const answers: Record<string, string> = {}
+
+    if (!conversation?.messages) return { answeredToolIds: ids, toolAnswers: answers }
+
+    for (const message of conversation.messages) {
+      if (message.type === 'user') {
+        for (const content of message.content) {
+          if (content.type === 'tool_result' && content.toolId) {
+            ids.add(content.toolId)
+            // Extract the answer from the tool result text
+            // Format: 'User has answered your questions: "Question?"="Answer". ...'
+            const text = content.text || ''
+            const match = text.match(/="([^"]+)"/)
+            if (match) {
+              answers[content.toolId] = match[1]
+            }
+          }
+        }
+      }
+    }
+
+    return { answeredToolIds: ids, toolAnswers: answers }
+  }, [conversation?.messages])
+
+  const getAnswerForToolId = useCallback((toolId: string) => {
+    return toolAnswers[toolId]
+  }, [toolAnswers])
+
+  // Handle answering questions by sending the answer to Claude
+  const handleAnswerQuestion = useCallback(async (answer: string) => {
+    try {
+      const response = await fetch(`http://localhost:3001/api/instances/${instance.pid}/message`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: answer }),
+      })
+      const data = await response.json()
+      if (!data.success) {
+        setSendError(data.error || 'Failed to send answer')
+      }
+    } catch (err) {
+      setSendError(err instanceof Error ? err.message : 'Failed to send answer')
+    }
+  }, [instance.pid])
+
   return (
     <div className="fixed inset-0 z-50 flex">
       {/* Backdrop */}
@@ -320,7 +368,13 @@ export default function ChatPanel({ instance, onClose }: ChatPanelProps) {
           ) : (
             <>
               {conversation?.messages.map((message) => (
-                <ChatMessage key={message.id} message={message} />
+                <ChatMessage
+                  key={message.id}
+                  message={message}
+                  onAnswerQuestion={handleAnswerQuestion}
+                  answeredToolIds={answeredToolIds}
+                  getAnswerForToolId={getAnswerForToolId}
+                />
               ))}
               <div ref={messagesEndRef} />
             </>

@@ -54,3 +54,20 @@ export interface Conversation {
   sessionId: string
   filePath: string
 }
+
+// AskUserQuestion types
+export interface QuestionOption {
+  label: string
+  description: string
+}
+
+export interface Question {
+  question: string
+  header: string
+  options: QuestionOption[]
+  multiSelect: boolean
+}
+
+export interface AskUserQuestionInput {
+  questions: Question[]
+}
