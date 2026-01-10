@@ -1,4 +1,4 @@
-import { memo, useRef } from 'react'
+import { memo, useRef, useEffect, useCallback } from 'react'
 import { useDraggable } from '@dnd-kit/core'
 import { CSS } from '@dnd-kit/utilities'
 import { ClaudeInstance } from '../types'
@@ -6,6 +6,7 @@ import { ClaudeInstance } from '../types'
 interface InstanceCardProps {
   instance: ClaudeInstance
   isSelected?: boolean
+  isFocused?: boolean
   onClick?: () => void
   isDragOverlay?: boolean
 }
@@ -83,6 +84,7 @@ const stateStyles = {
 const InstanceCard = memo(function InstanceCard({
   instance,
   isSelected,
+  isFocused,
   onClick,
   isDragOverlay,
 }: InstanceCardProps) {
@@ -91,7 +93,21 @@ const InstanceCard = memo(function InstanceCard({
     disabled: isDragOverlay,
   })
 
+  const cardRef = useRef<HTMLDivElement>(null)
   const dragHandleRef = useRef<HTMLDivElement>(null)
+
+  // Combine refs for dnd-kit and our card ref
+  const combinedRef = useCallback((node: HTMLDivElement | null) => {
+    setNodeRef(node)
+    ;(cardRef as React.MutableRefObject<HTMLDivElement | null>).current = node
+  }, [setNodeRef])
+
+  // Auto-scroll focused card into view
+  useEffect(() => {
+    if (isFocused && cardRef.current) {
+      cardRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+    }
+  }, [isFocused])
 
   const todoProgress =
     instance.todos.total > 0
@@ -118,12 +134,14 @@ const InstanceCard = memo(function InstanceCard({
 
   return (
     <div
-      ref={setNodeRef}
+      ref={combinedRef}
       style={style}
       className={`bg-card-bg border rounded-lg p-4 transition-all select-none relative cursor-pointer ${stateStyles[instance.state]} ${
         isSelected
           ? 'border-blue-500 ring-2 ring-blue-200 shadow-md'
-          : 'border-border hover:border-gray-300 hover:shadow-sm'
+          : isFocused
+            ? 'border-purple-400 ring-2 ring-purple-100 shadow-sm'
+            : 'border-border hover:border-gray-300 hover:shadow-sm'
       } ${needsAttention ? 'animate-attention-pulse' : ''} ${
         isDragging ? 'opacity-50' : ''
       } ${isDragOverlay ? 'shadow-xl cursor-grabbing rotate-2' : ''}`}

@@ -18,6 +18,7 @@ interface BoardProps {
   instances: ClaudeInstance[]
   inactiveInstances: ClaudeInstance[]
   selectedId?: string
+  focusedId?: string | null
   onSelectInstance: (instance: ClaudeInstance) => void
   onMoveToInactive: (id: string) => void
   onReactivate: (id: string) => void
@@ -35,6 +36,7 @@ export default function Board({
   instances,
   inactiveInstances,
   selectedId,
+  focusedId,
   onSelectInstance,
   onMoveToInactive,
   onReactivate,
@@ -165,6 +167,7 @@ export default function Board({
             color={col.color}
             instances={col.instances}
             selectedId={selectedId}
+            focusedId={focusedId}
             onSelectInstance={onSelectInstance}
             isDragging={activeId !== null}
             isDropDisabled={getDropDisabled(col.id)}

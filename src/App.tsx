@@ -3,9 +3,11 @@ import Board from './components/Board'
 import Header from './components/Header'
 import ChatPanel from './components/ChatPanel'
 import SpawnDialog from './components/SpawnDialog'
+import KeyboardHelp from './components/KeyboardHelp'
 import { ClaudeInstance } from './types'
 import { useNotifications } from './hooks/useNotifications'
 import { useInactiveState } from './hooks/useInactiveState'
+import { useKeyboardNavigation } from './hooks/useKeyboardNavigation'
 
 interface SystemStatus {
   claudeInstalled: boolean
@@ -106,7 +108,8 @@ function App() {
 
   useEffect(() => {
     fetchInstances()
-    const interval = setInterval(fetchInstances, 1500)
+    // Poll for updates every 2 seconds (optimized from 1.5s for better performance)
+    const interval = setInterval(fetchInstances, 2000)
     return () => clearInterval(interval)
   }, [fetchInstances])
 
@@ -114,9 +117,22 @@ function App() {
     setSelectedInstance(instance)
   }, [])
 
-  const handleCloseDetail = () => {
+  const handleCloseDetail = useCallback(() => {
     setSelectedInstance(null)
-  }
+  }, [])
+
+  // Keyboard navigation
+  const {
+    focusedId,
+    showHelp,
+    setShowHelp,
+  } = useKeyboardNavigation({
+    instances: activeInstances,
+    inactiveInstances,
+    selectedInstance,
+    onSelectInstance: handleSelectInstance,
+    onClosePanel: handleCloseDetail,
+  })
 
   return (
     <div className="min-h-screen bg-board-bg">
@@ -201,6 +217,7 @@ function App() {
             instances={activeInstances}
             inactiveInstances={inactiveInstances}
             selectedId={selectedInstance?.id}
+            focusedId={focusedId}
             onSelectInstance={handleSelectInstance}
             onMoveToInactive={addInactive}
             onReactivate={removeInactive}
@@ -230,6 +247,9 @@ function App() {
         onClose={() => setShowSpawnDialog(false)}
         onSpawn={fetchInstances}
       />
+
+      {/* Keyboard Help */}
+      <KeyboardHelp isOpen={showHelp} onClose={() => setShowHelp(false)} />
     </div>
   )
 }

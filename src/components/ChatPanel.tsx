@@ -138,8 +138,8 @@ export default function ChatPanel({ instance, onClose }: ChatPanelProps) {
 
     fetchConversation()
 
-    // Poll for updates every 2 seconds
-    const interval = setInterval(fetchConversation, 2000)
+    // Poll for updates every 3 seconds (reduced from 2s for better performance)
+    const interval = setInterval(fetchConversation, 3000)
     return () => clearInterval(interval)
   }, [sessionId])
 

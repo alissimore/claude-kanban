@@ -65,6 +65,7 @@ function pathToClaudeDir(fsPath: string): string {
 
 /**
  * Find all running Claude Code processes (the actual claude CLI, not child processes)
+ * Optimized to run lsof calls in parallel
  */
 async function findRunningProcesses(): Promise<Array<{ pid: number; cwd: string }>> {
   try {
@@ -75,23 +76,24 @@ async function findRunningProcesses(): Promise<Array<{ pid: number; cwd: string 
     )
 
     const pids = psOutput.trim().split('\n').filter(Boolean).map(Number)
-    const results: Array<{ pid: number; cwd: string }> = []
 
-    for (const pid of pids) {
-      try {
-        const { stdout: lsofOutput } = await execAsync(
-          `lsof -p ${pid} 2>/dev/null | grep cwd | awk '{print $NF}'`
-        )
-        const cwd = lsofOutput.trim()
-        if (cwd) {
-          results.push({ pid, cwd })
+    // Run all lsof calls in parallel for better performance
+    const results = await Promise.all(
+      pids.map(async (pid) => {
+        try {
+          const { stdout: lsofOutput } = await execAsync(
+            `lsof -p ${pid} 2>/dev/null | grep cwd | awk '{print $NF}'`
+          )
+          const cwd = lsofOutput.trim()
+          return cwd ? { pid, cwd } : null
+        } catch {
+          // Process might have exited
+          return null
         }
-      } catch {
-        // Process might have exited
-      }
-    }
+      })
+    )
 
-    return results
+    return results.filter((r): r is { pid: number; cwd: string } => r !== null)
   } catch {
     return []
   }
@@ -278,24 +280,37 @@ function hasThinking(content: unknown): boolean {
   return content.some((c: any) => c.type === 'thinking')
 }
 
+// Cache for git info - expires after 30 seconds
+const gitInfoCache = new Map<string, { data: { branch: string; isDirty: boolean } | null; timestamp: number }>()
+const GIT_CACHE_TTL = 30000 // 30 seconds
+
 /**
- * Get git status for a directory
+ * Get git status for a directory (with caching)
  */
 async function getGitInfo(cwd: string): Promise<{ branch: string; isDirty: boolean } | null> {
+  const now = Date.now()
+  const cached = gitInfoCache.get(cwd)
+
+  if (cached && (now - cached.timestamp) < GIT_CACHE_TTL) {
+    return cached.data
+  }
+
   try {
-    const { stdout: branch } = await execAsync(
-      `cd "${cwd}" && git rev-parse --abbrev-ref HEAD 2>/dev/null`
-    )
+    // Run both git commands in parallel for better performance
+    const [branchResult, statusResult] = await Promise.all([
+      execAsync(`cd "${cwd}" && git rev-parse --abbrev-ref HEAD 2>/dev/null`),
+      execAsync(`cd "${cwd}" && git status --porcelain 2>/dev/null`),
+    ])
 
-    const { stdout: status } = await execAsync(
-      `cd "${cwd}" && git status --porcelain 2>/dev/null`
-    )
-
-    return {
-      branch: branch.trim(),
-      isDirty: status.trim().length > 0,
+    const data = {
+      branch: branchResult.stdout.trim(),
+      isDirty: statusResult.stdout.trim().length > 0,
     }
+
+    gitInfoCache.set(cwd, { data, timestamp: now })
+    return data
   } catch {
+    gitInfoCache.set(cwd, { data: null, timestamp: now })
     return null
   }
 }
@@ -462,11 +477,75 @@ function createDisplayContent(messages: RawMessage[]): { type: 'user' | 'assista
 }
 
 /**
+ * Process a single conversation file into an instance
+ */
+async function processConversationFile(
+  conversationFile: string,
+  pid: number,
+  cwd: string,
+  seenSessions: Set<string>
+): Promise<ClaudeInstance | null> {
+  const [messages, fileStat] = await Promise.all([
+    parseConversation(conversationFile),
+    fs.stat(conversationFile),
+  ])
+
+  if (messages.length === 0) return null
+
+  // Get session ID from the most recent message
+  const sessionId = messages[messages.length - 1].sessionId || messages[0].sessionId
+  if (!sessionId || seenSessions.has(sessionId)) return null
+  seenSessions.add(sessionId)
+
+  const fileAgeMs = Date.now() - fileStat.mtime.getTime()
+  const lastMessage = messages[messages.length - 1]
+  const sessionCwd = lastMessage.cwd || cwd
+
+  // Run todos and git info in parallel
+  const [todos, gitInfo] = await Promise.all([
+    getTodos(sessionId),
+    getGitInfo(sessionCwd),
+  ])
+
+  const state = classifyState(messages, todos, fileAgeMs)
+  const displayContent = createDisplayContent(messages)
+  const currentTool = getCurrentTool(messages)
+  const fileChanges = extractFileChanges(messages)
+  const stateStartedAt = new Date(fileStat.mtime)
+
+  return {
+    id: sessionId,
+    pid,
+    cwd: sessionCwd,
+    name: path.basename(sessionCwd),
+    state,
+    lastActivity: new Date(lastMessage.timestamp),
+    stateStartedAt,
+    gitBranch: gitInfo?.branch || lastMessage.gitBranch || undefined,
+    gitDirty: gitInfo?.isDirty,
+    currentTool,
+    fileChanges: fileChanges.length > 0 ? fileChanges : undefined,
+    lastMessage: {
+      type: displayContent.type,
+      content: displayContent.content,
+      timestamp: lastMessage.timestamp,
+    },
+    todos: {
+      total: todos.length,
+      completed: todos.filter(t => t.status === 'completed').length,
+      inProgress: todos.find(t => t.status === 'in_progress')?.content,
+      items: todos.slice(0, 5),
+    },
+    conversationFile: path.basename(conversationFile),
+  }
+}
+
+/**
  * Detect all running Claude instances and their states
+ * Optimized with parallel processing for better performance
  */
 export async function detectInstances(): Promise<ClaudeInstance[]> {
   const processes = await findRunningProcesses()
-  const instances: ClaudeInstance[] = []
   const seenSessions = new Set<string>()
 
   // Count processes per cwd - we'll show this many sessions per cwd
@@ -478,71 +557,39 @@ export async function detectInstances(): Promise<ClaudeInstance[]> {
     cwdPids.get(proc.cwd)!.push(proc.pid)
   }
 
-  // For each unique cwd, get as many recent sessions as there are processes
-  for (const [cwd, processCount] of cwdProcessCount.entries()) {
-    const conversationFiles = await findConversationFiles(cwd)
+  // Get conversation files for all cwds in parallel
+  const cwdEntries = Array.from(cwdProcessCount.entries())
+  const conversationFilesPerCwd = await Promise.all(
+    cwdEntries.map(([cwd]) => findConversationFiles(cwd))
+  )
+
+  // Build list of all files to process with their associated PIDs
+  const filesToProcess: Array<{ file: string; pid: number; cwd: string }> = []
+  for (let i = 0; i < cwdEntries.length; i++) {
+    const [cwd, processCount] = cwdEntries[i]
+    const conversationFiles = conversationFilesPerCwd[i]
     const pids = cwdPids.get(cwd) || []
 
     // Take the most recent N conversation files where N = number of processes
-    const filesToProcess = conversationFiles.slice(0, processCount)
-
-    for (let i = 0; i < filesToProcess.length; i++) {
-      const conversationFile = filesToProcess[i]
-      const pid = pids[i] || pids[0] // Assign PIDs to sessions
-
-      const messages = await parseConversation(conversationFile)
-      if (messages.length === 0) continue
-
-      // Get session ID from the most recent message
-      const sessionId = messages[messages.length - 1].sessionId || messages[0].sessionId
-      if (!sessionId || seenSessions.has(sessionId)) continue
-      seenSessions.add(sessionId)
-
-      // Get file modification time to determine if Claude is actively working
-      const fileStat = await fs.stat(conversationFile)
-      const fileAgeMs = Date.now() - fileStat.mtime.getTime()
-
-      const lastMessage = messages[messages.length - 1]
-      // Use cwd from conversation if available, otherwise use process cwd
-      const sessionCwd = lastMessage.cwd || cwd
-      const todos = await getTodos(sessionId)
-      const gitInfo = await getGitInfo(sessionCwd)
-      const state = classifyState(messages, todos, fileAgeMs)
-      const displayContent = createDisplayContent(messages)
-      const currentTool = getCurrentTool(messages)
-      const fileChanges = extractFileChanges(messages)
-
-      // Approximate state start time from file modification time
-      // (In a more complete implementation, we'd track state transitions)
-      const stateStartedAt = new Date(fileStat.mtime)
-
-      instances.push({
-        id: sessionId,
-        pid,
-        cwd: sessionCwd,
-        name: path.basename(sessionCwd),
-        state,
-        lastActivity: new Date(lastMessage.timestamp),
-        stateStartedAt,
-        gitBranch: gitInfo?.branch || lastMessage.gitBranch || undefined,
-        gitDirty: gitInfo?.isDirty,
-        currentTool,
-        fileChanges: fileChanges.length > 0 ? fileChanges : undefined,
-        lastMessage: {
-          type: displayContent.type,
-          content: displayContent.content,
-          timestamp: lastMessage.timestamp,
-        },
-        todos: {
-          total: todos.length,
-          completed: todos.filter(t => t.status === 'completed').length,
-          inProgress: todos.find(t => t.status === 'in_progress')?.content,
-          items: todos.slice(0, 5),
-        },
-        conversationFile: path.basename(conversationFile),
+    const files = conversationFiles.slice(0, processCount)
+    for (let j = 0; j < files.length; j++) {
+      filesToProcess.push({
+        file: files[j],
+        pid: pids[j] || pids[0],
+        cwd,
       })
     }
   }
+
+  // Process all conversation files in parallel
+  const results = await Promise.all(
+    filesToProcess.map(({ file, pid, cwd }) =>
+      processConversationFile(file, pid, cwd, seenSessions)
+    )
+  )
+
+  // Filter out null results and sort
+  const instances = results.filter((r): r is ClaudeInstance => r !== null)
 
   // Sort by state priority, then by last activity
   const stateOrder: Record<InstanceState, number> = {

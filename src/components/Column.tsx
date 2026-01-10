@@ -9,6 +9,7 @@ interface ColumnProps {
   color: string
   instances: ClaudeInstance[]
   selectedId?: string
+  focusedId?: string | null
   onSelectInstance: (instance: ClaudeInstance) => void
   isDragging?: boolean
   isDropDisabled?: boolean
@@ -18,10 +19,12 @@ interface ColumnProps {
 const CardWrapper = memo(function CardWrapper({
   instance,
   isSelected,
+  isFocused,
   onSelect,
 }: {
   instance: ClaudeInstance
   isSelected: boolean
+  isFocused: boolean
   onSelect: (instance: ClaudeInstance) => void
 }) {
   const handleClick = useCallback(() => {
@@ -32,6 +35,7 @@ const CardWrapper = memo(function CardWrapper({
     <InstanceCard
       instance={instance}
       isSelected={isSelected}
+      isFocused={isFocused}
       onClick={handleClick}
     />
   )
@@ -43,6 +47,7 @@ export default function Column({
   color,
   instances,
   selectedId,
+  focusedId,
   onSelectInstance,
   isDragging,
   isDropDisabled,
@@ -77,6 +82,7 @@ export default function Column({
             key={instance.id}
             instance={instance}
             isSelected={instance.id === selectedId}
+            isFocused={instance.id === focusedId}
             onSelect={onSelectInstance}
           />
         ))}

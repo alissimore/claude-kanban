@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, memo } from 'react'
 import { ConversationMessage, MessageContent, AskUserQuestionInput } from '../types'
 import AskUserQuestionBlock from './AskUserQuestionBlock'
 
@@ -165,7 +165,7 @@ function TextContent({ text }: { text: string }) {
   )
 }
 
-export default function ChatMessage({
+const ChatMessage = memo(function ChatMessage({
   message,
   onAnswerQuestion,
   answeredToolIds,
@@ -233,4 +233,6 @@ export default function ChatMessage({
       </div>
     </div>
   )
-}
+})
+
+export default ChatMessage
