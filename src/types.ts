@@ -1,6 +1,12 @@
 export type InstanceState = 'attention' | 'working' | 'blocked' | 'done'
 export type ColumnId = InstanceState | 'inactive'
 
+export interface FileChange {
+  path: string
+  linesAdded: number
+  linesRemoved: number
+}
+
 export interface ClaudeInstance {
   id: string
   pid: number
@@ -8,8 +14,11 @@ export interface ClaudeInstance {
   name: string
   state: InstanceState
   lastActivity: string
+  stateStartedAt?: string
   gitBranch?: string
   gitDirty?: boolean
+  currentTool?: string
+  fileChanges?: FileChange[]
   lastMessage: {
     type: 'user' | 'assistant'
     content: string

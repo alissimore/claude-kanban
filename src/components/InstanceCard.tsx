@@ -10,20 +10,67 @@ interface InstanceCardProps {
   isDragOverlay?: boolean
 }
 
-function formatTimeAgo(dateString: string): string {
+function formatElapsedTime(dateString: string): string {
   const date = new Date(dateString)
   const now = new Date()
   const diffMs = now.getTime() - date.getTime()
-  const diffMins = Math.floor(diffMs / 60000)
+  const diffSecs = Math.floor(diffMs / 1000)
 
-  if (diffMins < 1) return 'just now'
-  if (diffMins < 60) return `${diffMins}m ago`
+  if (diffSecs < 60) return `${diffSecs}s`
+
+  const diffMins = Math.floor(diffSecs / 60)
+  if (diffMins < 60) return `${diffMins}m`
 
   const diffHours = Math.floor(diffMins / 60)
-  if (diffHours < 24) return `${diffHours}h ago`
+  const remainingMins = diffMins % 60
+  if (diffHours < 24) return `${diffHours}h ${remainingMins}m`
 
   const diffDays = Math.floor(diffHours / 24)
-  return `${diffDays}d ago`
+  return `${diffDays}d`
+}
+
+// Map tool names to shorter display names
+const toolDisplayNames: Record<string, string> = {
+  Read: 'Read',
+  Edit: 'Edit',
+  Write: 'Write',
+  Bash: 'Bash',
+  Glob: 'Glob',
+  Grep: 'Grep',
+  Task: 'Task',
+  TodoWrite: 'Todo',
+  WebFetch: 'Web',
+  WebSearch: 'Search',
+  AskUserQuestion: 'Ask',
+}
+
+// Get display name for a tool, handling MCP tools
+function getToolDisplayName(toolName: string): string {
+  // Check direct mapping first
+  if (toolDisplayNames[toolName]) {
+    return toolDisplayNames[toolName]
+  }
+
+  // Handle MCP tools: mcp__server__tool_name -> tool_name (shortened)
+  if (toolName.startsWith('mcp__')) {
+    const parts = toolName.split('__')
+    if (parts.length >= 3) {
+      // Get the tool name part and shorten it
+      const mcpToolName = parts.slice(2).join('_')
+      // Take first meaningful word or abbreviate
+      const shortName = mcpToolName
+        .replace(/_/g, ' ')
+        .split(' ')
+        .slice(0, 2)
+        .map(w => w.charAt(0).toUpperCase() + w.slice(1, 4))
+        .join('')
+      return shortName || 'MCP'
+    }
+    return 'MCP'
+  }
+
+  // Fallback: truncate long names
+  return toolName.length > 8 ? toolName.slice(0, 6) + '..' : toolName
 }
 
 const stateStyles = {
@@ -108,8 +155,25 @@ const InstanceCard = memo(function InstanceCard({
             {instance.cwd.replace(/^\/Users\/[^/]+\//, '~/')}
           </div>
         </div>
-        <div className="text-xs text-text-muted ml-2 flex-shrink-0">
-          {formatTimeAgo(instance.lastMessage.timestamp)}
+        <div className="flex flex-col items-end gap-1 ml-2 flex-shrink-0">
+          {/* Elapsed time with clock icon */}
+          {instance.stateStartedAt && (
+            <div className="flex items-center gap-1 text-xs text-text-secondary" title="Time in current state">
+              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <span>{formatElapsedTime(instance.stateStartedAt)}</span>
+            </div>
+          )}
+          {/* Current tool badge */}
+          {instance.currentTool && instance.state === 'working' && (
+            <div className="flex items-center gap-1 text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded font-medium">
+              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
+              </svg>
+              <span>{getToolDisplayName(instance.currentTool)}</span>
+            </div>
+          )}
         </div>
       </div>
 
@@ -131,6 +195,30 @@ const InstanceCard = memo(function InstanceCard({
           )}
         </div>
       )}
+
+      {/* File changes - git style */}
+      {instance.fileChanges && instance.fileChanges.length > 0 && (() => {
+        const totalAdded = instance.fileChanges.reduce((sum, f) => sum + f.linesAdded, 0)
+        const totalRemoved = instance.fileChanges.reduce((sum, f) => sum + f.linesRemoved, 0)
+        const fileList = instance.fileChanges
+          .slice(0, 5)
+          .map(f => f.path.split('/').pop())
+          .join(', ')
+        const moreCount = instance.fileChanges.length > 5 ? instance.fileChanges.length - 5 : 0
+
+        return (
+          <div
+            className="flex items-center gap-2 text-xs mb-2 cursor-default"
+            title={`Files: ${fileList}${moreCount > 0 ? ` +${moreCount} more` : ''}`}
+          >
+            <span className="text-green-600 font-medium">+{totalAdded}</span>
+            <span className="text-red-500 font-medium">-{totalRemoved}</span>
+            <span className="text-text-muted">
+              ({instance.fileChanges.length} file{instance.fileChanges.length !== 1 ? 's' : ''})
+            </span>
+          </div>
+        )
+      })()}
 
       {/* Current in-progress task */}
       {instance.todos.inProgress && (

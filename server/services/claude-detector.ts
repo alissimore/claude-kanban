@@ -2,7 +2,7 @@ import { exec } from 'child_process'
 import { promisify } from 'util'
 import * as fs from 'fs/promises'
 import * as path from 'path'
-import { ClaudeInstance, InstanceState, RawMessage } from '../types.js'
+import { ClaudeInstance, InstanceState, RawMessage, FileChange } from '../types.js'
 
 const execAsync = promisify(exec)
 
@@ -195,6 +195,79 @@ function getToolNames(content: unknown): string[] {
   return content
     .filter((c: any) => c.type === 'tool_use')
     .map((c: any) => c.name)
+}
+
+/**
+ * Get the most recent tool being used
+ */
+function getCurrentTool(messages: RawMessage[]): string | undefined {
+  // Look through recent messages for tool usage
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i]
+    if (msg.type === 'assistant') {
+      const tools = getToolNames(msg.content)
+      if (tools.length > 0) {
+        // Return the last tool in the most recent assistant message with tools
+        return tools[tools.length - 1]
+      }
+    }
+  }
+  return undefined
+}
+
+/**
+ * Extract file changes from Edit/Write tool calls in messages
+ */
+function extractFileChanges(messages: RawMessage[]): FileChange[] {
+  const fileMap = new Map<string, FileChange>()
+
+  for (const msg of messages) {
+    if (msg.type !== 'assistant') continue
+
+    // Content could be string or array
+    const content = msg.content
+    if (!Array.isArray(content)) continue
+
+    for (const block of content as any[]) {
+      if (block.type !== 'tool_use') continue
+
+      const toolName = block.name
+      const input = block.input as Record<string, unknown>
+
+      if (toolName === 'Edit' && input?.file_path) {
+        const filePath = String(input.file_path)
+        const oldStr = String(input.old_string || '')
+        const newStr = String(input.new_string || '')
+
+        const oldLines = oldStr ? oldStr.split('\n').length : 0
+        const newLines = newStr ? newStr.split('\n').length : 0
+
+        const existing = fileMap.get(filePath) || { path: filePath, linesAdded: 0, linesRemoved: 0 }
+        // More accurate diff: count actual line changes
+        if (newLines > oldLines) {
+          existing.linesAdded += (newLines - oldLines)
+        } else if (oldLines > newLines) {
+          existing.linesRemoved += (oldLines - newLines)
+        }
+        // If same number of lines but content changed, count as 1 modified
+        if (oldLines === newLines && oldStr !== newStr) {
+          existing.linesAdded += 1
+          existing.linesRemoved += 1
+        }
+        fileMap.set(filePath, existing)
+      } else if (toolName === 'Write' && input?.file_path) {
+        const filePath = String(input.file_path)
+        const writeContent = String(input.content || '')
+        const lines = writeContent ? writeContent.split('\n').length : 0
+
+        const existing = fileMap.get(filePath) || { path: filePath, linesAdded: 0, linesRemoved: 0 }
+        existing.linesAdded += lines
+        fileMap.set(filePath, existing)
+      }
+    }
+  }
+
+  return Array.from(fileMap.values())
 }
 
 /**
@@ -436,6 +509,12 @@ export async function detectInstances(): Promise<ClaudeInstance[]> {
       const gitInfo = await getGitInfo(sessionCwd)
       const state = classifyState(messages, todos, fileAgeMs)
       const displayContent = createDisplayContent(messages)
+      const currentTool = getCurrentTool(messages)
+      const fileChanges = extractFileChanges(messages)
+
+      // Approximate state start time from file modification time
+      // (In a more complete implementation, we'd track state transitions)
+      const stateStartedAt = new Date(fileStat.mtime)
 
       instances.push({
         id: sessionId,
@@ -444,8 +523,11 @@ export async function detectInstances(): Promise<ClaudeInstance[]> {
         name: path.basename(sessionCwd),
         state,
         lastActivity: new Date(lastMessage.timestamp),
+        stateStartedAt,
         gitBranch: gitInfo?.branch || lastMessage.gitBranch || undefined,
         gitDirty: gitInfo?.isDirty,
+        currentTool,
+        fileChanges: fileChanges.length > 0 ? fileChanges : undefined,
         lastMessage: {
           type: displayContent.type,
           content: displayContent.content,
